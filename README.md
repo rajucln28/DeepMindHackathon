@@ -95,6 +95,25 @@ Model IDs can be overridden in `server/.env` (`LIVE_MODEL`, `TTS_MODEL`, `ANALYS
 
 ---
 
+## Deploy to Google Cloud Run
+
+Cloud Run gives a public HTTPS address, which Chrome needs for microphone access, and it supports the WebSocket audio stream.
+
+```bash
+cd aegis-v2
+gcloud config set project YOUR_PROJECT_ID
+gcloud services enable run.googleapis.com cloudbuild.googleapis.com secretmanager.googleapis.com artifactregistry.googleapis.com
+
+# store the key as a secret (never bake it into the image)
+printf '%s' "YOUR_GEMINI_KEY" | gcloud secrets create gemini-api-key --data-file=-
+gcloud secrets add-iam-policy-binding gemini-api-key   --member="serviceAccount:$(gcloud projects describe YOUR_PROJECT_ID --format='value(projectNumber)')-compute@developer.gserviceaccount.com"   --role=roles/secretmanager.secretAccessor
+
+gcloud run deploy rescueroom --source . --region asia-south1 --allow-unauthenticated   --port 8080 --cpu 1 --memory 1Gi --timeout 3600 --session-affinity   --min-instances 1 --max-instances 2 --concurrency 20 --no-cpu-throttling   --set-secrets GEMINI_API_KEY=gemini-api-key:latest
+```
+The command prints the service URL. To stop all charges afterwards: `gcloud run services delete rescueroom --region asia-south1`.
+
+---
+
 ## Troubleshooting
 
 | Problem | Fix |
