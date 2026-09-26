@@ -1,0 +1,23 @@
+[
+  {
+    "id": "a1",
+    "text": "Hi everyone, Arjun from finance here. Good news: the server migration budget is approved at five hundred thousand dollars, and we go live this Friday."
+  },
+  {
+    "id": "b1",
+    "text": "Thanks Arjun, this is Priya from infra. With that budget my team can finish the cutover by Friday evening."
+  },
+  {
+    "id": "c1",
+    "text": "नहीं नहीं, ये बिल्कुल गलत है! बजट सिर्फ़ दो लाख डॉलर का मंज़ूर हुआ है, पाँच लाख का नहीं।",
+    "waitFor": "audio"
+  },
+  {
+    "id": "a2",
+    "text": "Aegis, stop. I just checked the email, the extra three hundred thousand was approved this morning. So it is five hundred thousand, final."
+  },
+  {
+    "id": "c2",
+    "text": "ठीक है, अगर ईमेल में है तो पाँच लाख ही फाइनल है।"
+  }
+]

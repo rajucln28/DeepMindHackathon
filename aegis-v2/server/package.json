@@ -4,7 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node index.js",
+    "e2e": "node e2e.js",
+    "make-demo": "node makeDemo.js"
   },
   "keywords": [],
   "author": "",

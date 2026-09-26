@@ -1,31 +1,37 @@
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 
 module.exports = {
-  PORT: process.env.PORT || 3001,
+  PORT: Number(process.env.PORT) || 3001,
   GEMINI_API_KEY: process.env.GEMINI_API_KEY || '',
-  
-  // Verified working models for this API key
+
   MODELS: {
     LIVE: process.env.LIVE_MODEL || 'gemini-3.8-live',
     TTS: process.env.TTS_MODEL || 'gemini-3.8-flash-tts',
-    TRANSLATE: 'gemini-3.5-live-translate-preview',
+    TRANSLATE: process.env.TRANSLATE_MODEL || 'gemini-3.5-live-translate-preview',
     ANALYSIS: process.env.ANALYSIS_MODEL || 'gemini-3.8-flash',
     TRANSCRIBE: process.env.TRANSCRIBE_MODEL || 'gemini-3.5-transcribe',
   },
 
-  // Audio settings
-  AUDIO: {
-    INPUT_SAMPLE_RATE: 16000,
-    OUTPUT_SAMPLE_RATE: 24000,
-    CHANNELS: 1,
-    ENCODING: 'LINEAR16',
+  VOICE: 'Zephyr',
+
+  VAD: {
+    FRAME: 320,             // 20ms at 16kHz
+    MIN_RMS: 450,           // absolute floor for speech
+    NOISE_MULT: 3,          // speech = rms > noiseFloor * NOISE_MULT
+    START_FRAMES: 3,        // 60ms of speech opens an utterance
+    END_SILENCE_MS: 900,    // silence that closes an utterance
+    MIN_SPEECH_MS: 500,
+    MAX_UTTERANCE_MS: 14000,
+    PREROLL_MS: 250,
   },
 
-  // Intervention thresholds
-  THRESHOLDS: {
-    CONFIDENCE_RED: 40,
-    CONFIDENCE_YELLOW: 65,
-    EMOTIONAL_RED: -50,
-    MIN_EVENTS_BEFORE_INTERVENTION: 3,
+  INTERVENTION: {
+    COOLDOWN_MS: 8000,
+    // Tone controller, measured from the END of the triggering utterance.
+    BACKOFF_ANGRY_MS: 4500,   // let a heated speaker finish and cool down
+    BACKOFF_DEFAULT_MS: 0,
+    QUIET_ANGRY_MS: 1200,     // required silence before speaking to a heated room
+    QUIET_DEFAULT_MS: 250,
+    MAX_WAIT_FOR_SILENCE_MS: 5000,
   },
 };

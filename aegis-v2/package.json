@@ -1,0 +1,12 @@
+{
+  "name": "aegis-v2",
+  "private": true,
+  "scripts": {
+    "setup": "npm --prefix server install && npm --prefix client install",
+    "build": "npm --prefix client run build",
+    "start": "npm --prefix client run build && npm --prefix server start",
+    "dev:client": "npm --prefix client run dev",
+    "dev:server": "npm --prefix server start",
+    "e2e": "npm --prefix server run e2e"
+  }
+}
