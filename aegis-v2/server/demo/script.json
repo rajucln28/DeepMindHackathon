@@ -1,23 +1,30 @@
 [
   {
-    "id": "a1",
-    "text": "Hi everyone, Arjun from finance here. Good news: the server migration budget is approved at five hundred thousand dollars, and we go live this Friday."
+    "id": "r1",
+    "text": "कंट्रोल, मैं रमेश, फील्ड टीम से। वेस्ट ब्रिज के पास एक आदमी मलबे में फँसा है, उसे साँस लेने में दिक्कत हो रही है!"
   },
   {
-    "id": "b1",
-    "text": "Thanks Arjun, this is Priya from infra. With that budget my team can finish the cutover by Friday evening."
+    "id": "r2",
+    "text": "नहीं नहीं, मेरे पापा रेलवे ब्रिज के पास हैं, वेस्ट ब्रिज पर नहीं! प्लीज़ जल्दी कीजिए!",
+    "waitFor": "done"
   },
   {
-    "id": "c1",
-    "text": "नहीं नहीं, ये बिल्कुल गलत है! बजट सिर्फ़ दो लाख डॉलर का मंज़ूर हुआ है, पाँच लाख का नहीं।",
+    "id": "r3",
+    "text": "This is Arjun, dispatch. Ramesh's GPS puts him on West Bridge, and he can see the victim. The location is West Bridge."
+  },
+  {
+    "id": "r4",
+    "text": "Create an urgent medical response to West Bridge, critical priority.",
+    "waitFor": "done"
+  },
+  {
+    "id": "r5",
+    "text": "Confirm.",
     "waitFor": "audio"
   },
   {
-    "id": "a2",
-    "text": "Aegis, stop. I just checked the email, the extra three hundred thousand was approved this morning. So it is five hundred thousand, final."
-  },
-  {
-    "id": "c2",
-    "text": "ठीक है, अगर ईमेल में है तो पाँच लाख ही फाइनल है।"
+    "id": "r6",
+    "text": "Stop! North entrance बंद है, पेड़ गिरा है। South road से आना होगा।",
+    "waitFor": "done"
   }
 ]

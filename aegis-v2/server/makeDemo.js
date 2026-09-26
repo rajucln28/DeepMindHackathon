@@ -8,11 +8,12 @@ const DIR = path.join(__dirname, 'demo');
 fs.mkdirSync(DIR, { recursive: true });
 
 const LINES = [
-  { id: 'a1', voice: 'Charon', style: 'confident', text: "Hi everyone, Arjun from finance here. Good news: the server migration budget is approved at five hundred thousand dollars, and we go live this Friday." },
-  { id: 'b1', voice: 'Kore', style: 'friendly', text: "Thanks Arjun, this is Priya from infra. With that budget my team can finish the cutover by Friday evening." },
-  { id: 'c1', voice: 'Puck', style: 'frustrated', text: "नहीं नहीं, ये बिल्कुल गलत है! बजट सिर्फ़ दो लाख डॉलर का मंज़ूर हुआ है, पाँच लाख का नहीं।", waitFor: 'audio' },
-  { id: 'a2', voice: 'Charon', style: 'serious', text: "Aegis, stop. I just checked the email, the extra three hundred thousand was approved this morning. So it is five hundred thousand, final." },
-  { id: 'c2', voice: 'Puck', style: 'calm', text: "ठीक है, अगर ईमेल में है तो पाँच लाख ही फाइनल है।" },
+  { id: 'r1', voice: 'Puck', style: 'frustrated', text: "कंट्रोल, मैं रमेश, फील्ड टीम से। वेस्ट ब्रिज के पास एक आदमी मलबे में फँसा है, उसे साँस लेने में दिक्कत हो रही है!" },
+  { id: 'r2', voice: 'Kore', style: 'frustrated', text: "नहीं नहीं, मेरे पापा रेलवे ब्रिज के पास हैं, वेस्ट ब्रिज पर नहीं! प्लीज़ जल्दी कीजिए!", waitFor: 'done' },
+  { id: 'r3', voice: 'Charon', style: '', text: "This is Arjun, dispatch. Ramesh's GPS puts him on West Bridge, and he can see the victim. The location is West Bridge." },
+  { id: 'r4', voice: 'Charon', style: '', text: "Create an urgent medical response to West Bridge, critical priority.", waitFor: 'done' },
+  { id: 'r5', voice: 'Charon', style: '', text: "Confirm.", waitFor: 'audio' },
+  { id: 'r6', voice: 'Puck', style: 'frustrated', text: "Stop! North entrance बंद है, पेड़ गिरा है। South road से आना होगा।", waitFor: 'done' },
 ];
 
 function resample(pcm, from, to) {

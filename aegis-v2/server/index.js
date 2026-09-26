@@ -32,6 +32,7 @@ wss.on('connection', (ws) => {
       case 'audio_done': session.speechFinished(msg.id); break;
       case 'clip': send({ type: 'clip', key: msg.key, data: session.clip(msg.start, msg.end) }); break;
       case 'summary': session.summary(); break;
+      case 'confirm_action': session.confirmFromConsole(msg.id); break;
       case 'wrapup': session.wrapUp(); break;
     }
   });
@@ -39,6 +40,6 @@ wss.on('connection', (ws) => {
 });
 
 server.listen(config.PORT, () => {
-  console.log(`[boot] AEGIS on http://localhost:${config.PORT}`);
+  console.log(`[boot] RescueRoom on http://localhost:${config.PORT}`);
   warmup(speakOnce);
 });

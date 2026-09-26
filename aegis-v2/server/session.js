@@ -1,8 +1,9 @@
-// One AEGIS session per connected browser: audio in → perception → world state → spoken intervention.
+// One RescueRoom session per connected browser: audio in → perception → incident state → actions → spoken response.
 const config = require('./config');
 const { Modality, LiveStream, speakStream, transcribe, wav } = require('./gemini');
 const { analyzeUtterance, quickCheck, summarize } = require('./analyzer');
 const W = require('./worldState');
+const tools = require('./tools');
 
 const BYTES_PER_MS = 32; // 16kHz * 2 bytes
 
@@ -51,6 +52,10 @@ class Session {
       if (t) { this.translationBuf += t; this.send({ type: 'translation', text: this.translationBuf.slice(-240) }); }
     }, this.log);
 
+    const status = (name, st) => this.send({ type: 'model_status', name, status: st });
+    this.live.onStatus = status;
+    this.translate.onStatus = status;
+    status('live', 'connecting'); status('translate', 'connecting');
     this.live.open();
     this.translate.open();
     this.pushState();
@@ -124,7 +129,7 @@ class Session {
   onSpeechStart() {
     this.send({ type: 'vad', speaking: true });
     // Server-side barge-in: a human talking over AEGIS stops it immediately.
-    if (this.speaking && Date.now() - this.speaking.startedAt > 600) this.bargeIn('voice detected over AEGIS');
+    if (this.speaking && Date.now() - this.speaking.startedAt > 600) this.bargeIn('voice detected over RescueRoom');
   }
 
   // ---------- perception + cognition ----------
@@ -171,10 +176,10 @@ class Session {
         return;
       }
       job.fullDone = true;
-      this.log(`analysed ${clip.start}-${clip.end}ms in ${Date.now() - t0}ms: [${a.speaker_id}/${a.language}/${a.tone}] ${a.english}`);
-      if (a.is_aegis_echo) { this.send({ type: 'utterance_failed', clip, reason: 'echo' }); return; }
+      this.log(`analysed ${clip.start}-${clip.end}ms in ${Date.now() - t0}ms: [${a.speaker_id}/${a.speaker_role}/${a.language}/${a.tone}/${a.urgency}] ${a.english}`);
+      if (a.is_rescueroom_echo) { this.send({ type: 'utterance_failed', clip, reason: 'echo' }); return; }
 
-      const { events, utterance, contradiction, resolved } = W.apply(this.state, a, clip);
+      const { events, utterance, contradiction, resolved, actionRequested, confirmed, replanned } = W.apply(this.state, a, clip);
       utterance.latencyMs = Date.now() - t0;
       this.send({ type: 'events', events });
       this.pushState();
@@ -186,28 +191,132 @@ class Session {
       });
 
       if (resolved && this.speaking) this.abortSpeech('resolved');
-      if (contradiction) this.planIntervention(contradiction, a, endedAt);
-      else this.send({ type: 'suspect_clear' });
+      if (!contradiction) this.send({ type: 'suspect_clear' });
+      this.react({ a, endedAt, contradiction, resolved, actionRequested, confirmed, replanned });
     });
   }
 
   // ---------- action: tone-aware intervention ----------
-  planIntervention(c, a, endedAt) {
+  // Decide what (if anything) to say after an utterance, and kick off tools.
+  react({ a, endedAt, contradiction, resolved, actionRequested, confirmed, replanned }) {
+    const replies = (a.replies || []).filter(r => r.text);
+    if (contradiction) {
+      if (Date.now() - this.lastInterventionAt < config.INTERVENTION.COOLDOWN_MS) return;
+      this.lastInterventionAt = Date.now();
+      const lines = replies.length ? replies : [{ to: 'all', language: 'en', text: `I heard two versions. ${contradiction.question || contradiction.explanation}` }];
+      return this.planSpeech({ kind: 'CLARIFY', lines, a, endedAt, valid: () => contradiction.status === 'OPEN', chime: true });
+    }
+    if (actionRequested) {
+      const act = actionRequested;
+      const disp = this.state.speakers[act.requestedBy];
+      const openQ = this.state.open_questions.find(q => q.status === 'OPEN');
+      const lines = act.status === 'BLOCKED'
+        ? [{ to: act.requestedBy, language: 'en', text: `Holding ${act.label.toLowerCase()} until the location is verified. ${openQ ? openQ.text : ''}` }]
+        : replies.length ? replies : [{ to: act.requestedBy, language: 'en', text: `${act.label} to ${act.location}, ${act.priority} priority. ${disp && disp.name ? disp.name + ', confirm?' : 'Confirm?'}` }];
+      return this.planSpeech({ kind: 'READBACK', lines, a, endedAt, valid: () => ['AWAITING_CONFIRMATION', 'BLOCKED'].includes(act.status) });
+    }
+    if (confirmed) return this.dispatch(confirmed);
+    if (replanned) return this.replan(replanned, a, replies);
+    if (resolved) {
+      const unblocked = this.state.actions.find(x => x.status === 'AWAITING_CONFIRMATION' && x.history.some(h => h.text.startsWith('Unblocked')));
+      if (unblocked) {
+        const lines = [{ to: unblocked.requestedBy, language: 'en', text: `Location verified: ${unblocked.location}. ${unblocked.label}, ${unblocked.priority}. Confirm?` }];
+        return this.planSpeech({ kind: 'READBACK', lines, a, endedAt, valid: () => unblocked.status === 'AWAITING_CONFIRMATION' });
+      }
+    }
+  }
+
+  // Runs mock tools in parallel; each one visibly flips from running → done in the UI.
+  async runTools(action, calls) {
+    const entries = calls.map(([name, args]) => {
+      const e = { name, args, status: 'running', startedAt: Date.now() };
+      action.tools.push(e);
+      return e;
+    });
+    this.pushState();
+    return Promise.all(calls.map(([name, args], i) => tools.run(name, args).then(r => {
+      Object.assign(entries[i], { status: 'done', result: r.result, ms: r.ms });
+      this.pushState();
+      return r.result;
+    })));
+  }
+
+  // Non-English, non-dispatcher participants get their own line in Hindi.
+  localLines(text) {
+    return Object.values(this.state.speakers)
+      .filter(sp => sp.language !== 'en' && sp.role !== 'dispatcher')
+      .map(sp => ({ to: sp.id, language: 'hi', text: text(sp) }));
+  }
+
+  async dispatch(action) {
+    const loc = action.location;
+    const [where, weather, kb] = await this.runTools(action, [
+      ['lookup_location', { location: loc }],
+      ['get_weather', { location: loc }],
+      ['knowledge_lookup', { topic: action.details || action.type }],
+    ]);
+    const notify = this.localLines(() => '').map(f => ['send_notification', { to: this.state.speakers[f.to].name || f.to, message: `Team dispatched to ${loc}` }]);
+    const [task] = await this.runTools(action, [
+      ['create_task', { type: action.type, location: loc, priority: action.priority, route: where.access }],
+      ...notify,
+    ]);
+    Object.assign(action, { status: 'DISPATCHED', taskId: task.task_id, unit: task.assigned, eta: where.eta_min, route: where.access, weather: weather.conditions, protocol: kb.protocol });
+    action.history.push({ at: Date.now(), text: `${task.task_id}: ${task.assigned} en route via ${where.access}, ETA ${where.eta_min} min` });
+    this.send({ type: 'events', events: [W.mark(this.state, 'ACTION_DISPATCHED', `${task.task_id} · ${action.label} → ${loc}, ETA ${where.eta_min} min`)] });
+    W.recompute(this.state);
+    this.pushState();
+    const disp = this.state.speakers[action.requestedBy];
+    const lines = [
+      { to: action.requestedBy, language: 'en', text: `Confirmed. ${task.assigned} is en route to ${loc} via the ${where.access.toLowerCase()}. ETA ${where.eta_min} minutes. ${weather.conditions} on scene.` },
+      ...this.localLines(sp => `${sp.name ? sp.name + ' जी, ' : ''}मेडिकल टीम ${loc} के लिए निकल चुकी है, लगभग ${where.eta_min} मिनट में पहुँचेगी।`),
+    ];
+    this.planSpeech({ kind: 'STATUS', lines, a: { tone: disp ? disp.tone : 'calm' }, endedAt: Date.now(), valid: () => action.status === 'DISPATCHED' });
+  }
+
+  async replan(action, a, replies) {
+    const avoid = action.constraints[action.constraints.length - 1];
+    const [where] = await this.runTools(action, [['lookup_location', { location: action.location, avoid }]]);
+    const route = action.pendingRoute || where.access;
+    const [task] = await this.runTools(action, [
+      ['create_task', { type: action.type, location: action.location, priority: action.priority, route }],
+      ['send_notification', { to: action.unit || 'Medic-7', message: `REROUTE: ${avoid}. Use ${route}.` }],
+    ]);
+    Object.assign(action, { status: action.previousStatus === 'AWAITING_CONFIRMATION' ? 'AWAITING_CONFIRMATION' : 'DISPATCHED', route, eta: where.eta_min, taskId: task.task_id });
+    action.history.push({ at: Date.now(), text: `Rerouted via ${route}, new ETA ${where.eta_min} min` });
+    this.send({ type: 'events', events: [W.mark(this.state, 'ACTION_REROUTED', `${action.label} rerouted via ${route} (${avoid}) · ETA ${where.eta_min} min`)] });
+    W.recompute(this.state);
+    this.pushState();
+    const lines = replies.length ? replies : [
+      { to: action.requestedBy, language: 'en', text: `Understood: ${avoid}. Rerouting ${action.unit || 'the team'} via ${route}. New ETA ${where.eta_min} minutes.` },
+      ...this.localLines(() => `समझ गया, टीम अब ${route} से आएगी।`),
+    ];
+    this.planSpeech({ kind: 'REPLAN', lines, a, endedAt: Date.now(), valid: () => action.status !== 'REPLANNING' });
+  }
+
+  confirmFromConsole(id) {
+    const action = this.state.actions.find(x => x.id === id && x.status === 'AWAITING_CONFIRMATION');
+    if (!action) return;
+    W.confirmAction(this.state, action, 'Dispatcher console');
+    this.send({ type: 'events', events: [W.mark(this.state, 'ACTION_CONFIRMED', `Console confirmed: ${action.label} → ${action.location}`)] });
+    this.pushState();
+    this.dispatch(action);
+  }
+
+  // Tone-aware speech: synthesis starts immediately, playback waits until the policy allows it.
+  planSpeech({ kind, lines, a, endedAt, valid, chime = false }) {
     const I = config.INTERVENTION;
-    if (Date.now() - this.lastInterventionAt < I.COOLDOWN_MS) return;
     const hostile = W.HOSTILE.has(a.tone), unsure = W.UNSURE.has(a.tone);
     const policy = hostile
       ? { backoff: I.BACKOFF_ANGRY_MS, quiet: I.QUIET_ANGRY_MS, style: 'warm', label: `${a.tone} → wait for ${I.QUIET_ANGRY_MS / 1000}s of calm, soften wording, add Hindi if needed` }
       : unsure
         ? { backoff: 0, quiet: I.QUIET_DEFAULT_MS, style: 'reassuring', label: `${a.tone} → intervene immediately, ground them` }
-        : { backoff: I.BACKOFF_DEFAULT_MS, quiet: I.QUIET_DEFAULT_MS, style: 'serious', label: `${a.tone} → crisp, neutral intervention` };
-    const text = (a.intervention || '').trim() || `Hold on. ${c.explanation} Can someone clarify?`;
-    this.lastInterventionAt = Date.now();
-    this.send({ type: 'events', events: [{ type: 'TONE_POLICY', text: policy.label, at: Date.now() }] });
+        : { backoff: I.BACKOFF_DEFAULT_MS, quiet: I.QUIET_DEFAULT_MS, style: 'calm', label: `${a.tone} → crisp, neutral intervention` };
+    const text = lines.map(l => l.text).join(' ');
+    if (kind === 'CLARIFY') this.send({ type: 'events', events: [{ type: 'TONE_POLICY', text: policy.label, at: Date.now() }] });
 
     // Start synthesising right away; audio is buffered until the tone policy says it is OK to speak.
     const job = { id: `i${Date.now()}`, aborted: false, released: false, buffered: [], done: false, startedAt: 0 };
-    const spoken = text.replace(/^\s*(hold on|wait|excuse me)[\s.,!—–-]*/i, '') || text; // chime already says "Hold on"
+    const spoken = chime ? (text.replace(/^\s*(hold on|wait|excuse me)[\s.,!—–-]*/i, '') || text) : text; // chime already says "Hold on"
     const t0 = Date.now();
     speakStream(spoken, (chunk) => {
       if (job.aborted) return;
@@ -221,26 +330,26 @@ class Session {
     const deadline = endedAt + policy.backoff;
     const waitStart = Date.now();
     const go = () => {
-      if (c.status !== 'OPEN') { job.aborted = true; return; }
+      if (!valid()) { job.aborted = true; return; }
       const quietFor = Date.now() - this.vad.lastSpeechAt;
       const waiting = Date.now() < deadline || this.vad.inSpeech || quietFor < policy.quiet;
       if (waiting && Date.now() - waitStart < I.MAX_WAIT_FOR_SILENCE_MS) return setTimeout(go, 100);
-      this.intervene(c, text, job, endedAt);
+      this.intervene({ kind, lines, text, job, endedAt, chime });
     };
     go();
   }
 
-  intervene(c, text, job, endedAt) {
+  intervene({ kind, lines, text, job, endedAt, chime }) {
     this.abortSpeech('superseded');
     job.startedAt = Date.now();
     this.speaking = job;
     this.lastInterventionText = text;
-    this.state.status = 'INTERVENING';
-    this.pushState();
-    this.log(`intervening ${Date.now() - endedAt}ms after speech ended`);
-    // Tier 1: instant pre-rendered "Hold on." on the client, zero model latency.
-    this.send({ type: 'intervene', id: job.id, text, contradiction: c.id });
-    this.send({ type: 'events', events: [{ type: 'INTERVENTION', text, at: Date.now(), contradiction: c.id, ms: Date.now() - endedAt }] });
+    this.log(`${kind} speaking ${Date.now() - endedAt}ms after trigger`);
+    // Tier 1: instant pre-rendered "Hold on." on the client (clarifications only), zero model latency.
+    this.send({ type: 'intervene', id: job.id, text, kind, chime });
+    const ROLE = { dispatcher: 'Dispatcher', field_responder: 'Field responder', family: 'Family' };
+    const lineView = lines.map(l => { const sp = this.state.speakers[l.to]; return { ...l, name: sp ? (sp.name || ROLE[sp.role] || l.to) : 'Everyone' }; });
+    this.send({ type: 'events', events: [W.mark(this.state, 'INTERVENTION', text, { kind, lines: lineView, ms: Date.now() - endedAt })] });
     // Tier 2: flush pre-synthesised Flash TTS audio, then keep streaming.
     job.released = true;
     for (const chunk of job.buffered) this.send({ type: 'audio', id: job.id, rate: chunk.rate, data: chunk.pcm.toString('base64') });
@@ -264,7 +373,7 @@ class Session {
 
   bargeIn(reason) {
     if (!this.speaking) return;
-    this.send({ type: 'events', events: [{ type: 'BARGE_IN', text: `Human interrupted AEGIS (${reason})`, at: Date.now() }] });
+    this.send({ type: 'events', events: [{ type: 'BARGE_IN', text: `Human interrupted RescueRoom (${reason})`, at: Date.now() }] });
     this.abortSpeech('barge-in');
   }
 
@@ -280,15 +389,14 @@ class Session {
     this.live?.close();
     this.translate?.close();
     this.abortSpeech('wrap-up');
-    this.state.status = 'WRAPPING UP';
+    this.state.status = 'CLOSING';
     this.pushState();
     const brief = await this.summary();
     if (!brief) return;
     const parts = [
-      `Here's where we landed. ${brief.headline}.`,
-      brief.decisions?.length ? `Decided: ${brief.decisions.slice(0, 2).join('; ')}.` : '',
-      brief.action_items?.length ? `Next steps: ${brief.action_items.slice(0, 2).map(a => `${a.owner} will ${a.task.replace(/^\w/, c => c.toLowerCase())}`).join('; ')}.` : '',
-      brief.open_issues?.length ? `Still open: ${brief.open_issues[0]}.` : 'Nothing is left unresolved.',
+      `Incident summary. ${brief.headline}.`,
+      brief.actions?.length ? `Actions: ${brief.actions.slice(0, 2).map(x => `${x.action}, ${x.status}`).join('; ')}.` : '',
+      brief.open_issues?.length ? `Still open: ${brief.open_issues[0]}.` : 'No unresolved contradictions.',
     ];
     const text = parts.filter(Boolean).join(' ');
     const job = { id: `w${Date.now()}`, aborted: false, startedAt: Date.now() };
@@ -325,7 +433,7 @@ class Session {
 
 async function warmup(speakOnce) {
   try {
-    cachedChime = await speakOnce('Hold on.', { voice: config.VOICE, style: 'serious' });
+    cachedChime = await speakOnce('Hold on.', { voice: config.VOICE, style: 'calm' });
     console.log(`[boot] chime cached (${cachedChime.pcm.length} bytes @ ${cachedChime.rate}Hz)`);
   } catch (e) { console.log(`[boot] chime failed: ${e.message}`); }
 }

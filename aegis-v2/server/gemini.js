@@ -34,7 +34,7 @@ function decodeAudio(b64, mimeType = '') {
 async function speakStream(text, onPcm, { voice = 'Kore', style = 'calm', shouldAbort = () => false } = {}) {
   const stream = await ai.models.generateContentStream({
     model: config.MODELS.TTS,
-    contents: [{ parts: [{ text: `[${style}] ${text}` }] }],
+    contents: [{ parts: [{ text: style ? `[${style}] ${text}` : text }] }],
     config: { responseModalities: ['AUDIO'], speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } } },
   });
   for await (const chunk of stream) {
@@ -89,22 +89,24 @@ class LiveStream {
         model: this.model, config: cfg,
         callbacks: {
           onmessage: (m) => {
-            if (m.setupComplete) { this.ready = true; this.log(`${this.name} ready`); }
+            if (m.setupComplete) { this.ready = true; this.log(`${this.name} ready`); this.onStatus?.(this.name, 'ready'); }
             if (m.sessionResumptionUpdate?.newHandle) this.handle = m.sessionResumptionUpdate.newHandle;
             if (m.goAway) this.log(`${this.name} goAway`);
             this.onMessage(m, this);
           },
-          onerror: (e) => this.log(`${this.name} error ${e.message}`),
+          onerror: (e) => { this.log(`${this.name} error ${e.message}`); this.onStatus?.(this.name, 'error'); },
           onclose: (e) => {
             this.ready = false;
             if (this.closed) return;
             this.log(`${this.name} closed ${e?.code} ${e?.reason || ''} — reconnecting`);
+            this.onStatus?.(this.name, 'reconnecting');
             setTimeout(() => this.open(), 500);
           },
         },
       });
     } catch (e) {
       this.log(`${this.name} connect failed: ${e.message}`);
+      this.onStatus?.(this.name, 'error');
       if (!this.closed) setTimeout(() => this.open(), 2000);
     }
   }
