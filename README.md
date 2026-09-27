@@ -7,7 +7,8 @@ RescueRoom is an audio-only coordinator. It listens to a live English and Hindi 
 It uses five Gemini models: Live, Live Translate, Flash, Flash TTS and Transcribe. A deeper technical write-up is in [aegis-v2/README.md](aegis-v2/README.md).
 
 ---
-# This project is deloyed in GCP anyone can access it from here: https://rescueroom-399152622050.asia-south1.run.app
+# This project is deloyed in GCP anyone can access it from here: https://rescueroom-399152622050.asia-south1.run.app 
+Youtube demo link : https://www.youtube.com/watch?v=Wt33mcRU8Wo
 
 ## Quick start
 
